@@ -1,15 +1,11 @@
 import re
-import pandas as pd
 import pymupdf  
-
 
 def parse_bca(pdf_file):
     transactions = []
 
     date_pattern = re.compile(r"^(\d{2}/\d{2})\s+(.*)")
-    amount_pattern = re.compile(
-        r"\b\d{1,3}(?:,\d{3})*(?:\.\d{2})?\b|\b\d+\.\d{2}\b"
-    )
+    amount_pattern = re.compile(r"\b\d{1,3}(?:,\d{3})*(?:\.\d{2})?\b|\b\d+\.\d{2}\b")
 
     ignore_starts = (
         "SALDO AKHIR",
@@ -29,23 +25,13 @@ def parse_bca(pdf_file):
 
     year = None
     all_page_blocks = []
-    
-    pdf_file.seek(0)
 
+    # Open uploaded PDF directly from memory
     pdf_bytes = pdf_file.read()
 
-    pdf = pymupdf.open(
-        stream=pdf_bytes,
-        filetype="pdf",
-    )
-
-    # Open PDF using PyMuPDF
-    # with pymupdf.open(pdf_file) as pdf:
-    try:
+    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as pdf:
         for page in pdf:
-            # Extract text using PyMuPDF
-            text = page.get_text("text")
-
+            text = page.get_text("text", sort=True)
             if not text:
                 continue
 
@@ -60,7 +46,6 @@ def parse_bca(pdf_file):
                             line,
                             re.IGNORECASE,
                         )
-
                         if periode_match:
                             _, year_str = periode_match.groups()
                             year = year_str
@@ -68,14 +53,13 @@ def parse_bca(pdf_file):
 
             # Clean header and footer lines for THIS PAGE ONLY
             page_clean_lines = []
-
             for line in lines:
                 line_str = line.strip()
 
                 if not line_str or line_str.startswith(ignore_starts):
                     continue
 
-                # Skip page numbers (e.g. "1 / 2" or "2 / 2")
+                # Skip page numbers (e.g., "1 / 2" or "2 / 2")
                 if re.match(r"^\d+\s*/\s*\d+$", line_str):
                     continue
 
@@ -89,9 +73,7 @@ def parse_bca(pdf_file):
                 if date_pattern.match(line):
                     if current_block:
                         page_blocks.append(current_block)
-
                     current_block = [line]
-
                 else:
                     if current_block:
                         current_block.append(line)
@@ -101,135 +83,90 @@ def parse_bca(pdf_file):
 
             all_page_blocks.extend(page_blocks)
 
-        if not year:
-            year = "2026"
+    if not year:
+        year = "2026"
 
-        # Process all transaction blocks across pages
-        for block in all_page_blocks:
-            first_line = block[0]
+    # Process all transaction blocks across pages
+    for block in all_page_blocks:
+        first_line = block[0]
+        match = date_pattern.match(first_line)
+        if not match:
+            continue
 
-            match = date_pattern.match(first_line)
+        dd_mm, remaining_text = match.groups()
 
-            if not match:
-                continue
+        # Join block lines with newlines
+        raw_full_text = "\n".join([remaining_text] + block[1:])
 
-            dd_mm, remaining_text = match.groups()
+        # Skip SALDO AWAL entry
+        if "SALDO AWAL" in raw_full_text:
+            continue
 
-            # Join block lines with newlines
-            raw_full_text = "\n".join(
-                [remaining_text] + block[1:]
-            )
+        # Format date as YYYY/MM/DD
+        day, mon = dd_mm.split("/")
+        tanggal_formatted = f"{year}/{mon}/{day}"
 
-            # Skip SALDO AWAL entry
-            if "SALDO AWAL" in raw_full_text:
-                continue
+        # Extract numeric amounts
+        raw_amounts = amount_pattern.findall(raw_full_text)
 
-            # Format date as YYYY/MM/DD
-            day, mon = dd_mm.split("/")
+        valid_amounts = []
+        for a in raw_amounts:
+            clean_a = a.replace(",", "")
+            if len(clean_a) >= 4 or "." in clean_a:
+                valid_amounts.append(clean_a)
 
-            tanggal_formatted = f"{year}/{mon}/{day}"
+        # Check DB flag
+        has_db = (
+            " DB" in raw_full_text
+            or "DB " in raw_full_text
+            or raw_full_text.strip().endswith("DB")
+        )
 
-            # Extract numeric amounts
-            raw_amounts = amount_pattern.findall(raw_full_text)
+        debet = 0.0
+        kredit = 0.0
 
-            valid_amounts = []
+        if valid_amounts:
+            mutasi_val = float(valid_amounts[0])
+            if has_db:
+                kredit = mutasi_val
+            else:
+                debet = mutasi_val
 
-            for a in raw_amounts:
-                clean_a = a.replace(",", "")
+        # --- REMARK CLEANING PIPELINE ---
+        keterangan = raw_full_text
 
-                if len(clean_a) >= 4 or "." in clean_a:
-                    valid_amounts.append(clean_a)
+        # 1. Remove newlines / enter characters
+        keterangan = keterangan.replace("\r", " ").replace("\n", " ")
 
-            # Check DB flag
-            has_db = (
-                " DB" in raw_full_text
-                or "DB " in raw_full_text
-                or raw_full_text.strip().endswith("DB")
-            )
+        # 2. Remove numeric amounts
+        for amt in raw_amounts:
+            keterangan = keterangan.replace(amt, "")
 
-            debet = 0.0
-            kredit = 0.0
+        # 3. Apply pattern cleanup rules
+        keterangan = re.sub(r"\bTRSF E-BANKING\b", "", keterangan)
+        keterangan = re.sub(r"\bBYR VIA E-BANKING\b", "", keterangan)
+        keterangan = re.sub(r"\bBI-FAST\b", "", keterangan)
+        keterangan = re.sub(r"\S*/FTSCY/\S*", "", keterangan)
+        keterangan = re.sub(r"\S*/FTFVA/\S*", "", keterangan)
+        keterangan = re.sub(r"\bDB\b", "", keterangan)
 
-            if valid_amounts:
-                mutasi_val = float(valid_amounts[0])
+        # 4. Trim spaces
+        keterangan = re.sub(r"\s+", " ", keterangan).strip()
 
-                if has_db:
-                    kredit = mutasi_val
-                else:
-                    debet = mutasi_val
+        # 5. Take first 100 characters from the LEFT
+        keterangan = keterangan[:100]
 
-            # --- REMARK CLEANING PIPELINE ---
-            keterangan = raw_full_text
+        transactions.append(
+            {
+                "tanggal": tanggal_formatted,
+                "keterangan": keterangan,
+                "debet": debet,
+                "kredit": kredit,
+            }
+        )
 
-            # 1. Remove newlines / enter characters
-            keterangan = (
-                keterangan
-                .replace("\r", " ")
-                .replace("\n", " ")
-            )
-
-            # 2. Remove numeric amounts
-            for amt in raw_amounts:
-                keterangan = keterangan.replace(amt, "")
-
-            # 3. Apply pattern cleanup rules
-            keterangan = re.sub(
-                r"\bTRSF E-BANKING\b",
-                "",
-                keterangan,
-            )
-
-            keterangan = re.sub(
-                r"\bBYR VIA E-BANKING\b",
-                "",
-                keterangan,
-            )
-
-            keterangan = re.sub(
-                r"\bBI-FAST\b",
-                "",
-                keterangan,
-            )
-
-            keterangan = re.sub(
-                r"\S*/FTSCY/\S*",
-                "",
-                keterangan,
-            )
-
-            keterangan = re.sub(
-                r"\S*/FTFVA/\S*",
-                "",
-                keterangan,
-            )
-
-            keterangan = re.sub(
-                r"\bDB\b",
-                "",
-                keterangan,
-            )
-
-            # 4. Trim spaces
-            keterangan = re.sub(
-                r"\s+",
-                " ",
-                keterangan,
-            ).strip()
-
-            # 5. Take first 100 characters from the LEFT
-            keterangan = keterangan[:100]
-
-            transactions.append(
-                {
-                    "tanggal": tanggal_formatted,
-                    "keterangan": keterangan,
-                    "debit": debet,
-                    "kredit": kredit,
-                }
-            )
-        return transactions
-    except Exception:
-        raise
+    return transactions
+    
 
 
 def parse_mandiri(pdf_file):
