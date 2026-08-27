@@ -101,7 +101,7 @@ def parse_bca(csv_file):
                     {
                         "tanggal": tanggal_formatted,
                         "keterangan": keterangan,
-                        "debet": debet,
+                        "debit": debet,
                         "kredit": kredit,
                     }
                 )

@@ -8,7 +8,7 @@ PROCESSORS = {
     },
     "UOB":{
         # "text/csv":extract_csv.parse_uob,
-        # "application/pdf":extract_pdf.parse_uob,  
+        "application/pdf":extract_pdf.parse_uob,  
     },
     "MASPION":{
         # "text/csv":extract_csv.parse_maspion,
@@ -16,7 +16,7 @@ PROCESSORS = {
     },
     "MANDIRI":{
         # "text/csv":extract_csv.parse_mandiri,
-        # "application/pdf":extract_pdf.parse_mandiri,  
+        "application/pdf":extract_pdf.parse_mandiri,  
     },
 }
 

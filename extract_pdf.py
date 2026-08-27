@@ -223,11 +223,346 @@ def parse_bca(pdf_file):
                 {
                     "tanggal": tanggal_formatted,
                     "keterangan": keterangan,
-                    "debet": debet,
+                    "debit": debet,
                     "kredit": kredit,
                 }
             )
         return transactions
-    except Exception as e:
-        return e
+    except Exception:
+        raise
 
+
+def parse_mandiri(pdf_file):
+    transactions = []
+    
+    month_map = {
+        "Jan": "01",
+        "Feb": "02",
+        "Mar": "03",
+        "Apr": "04",
+        "May": "05",
+        "Jun": "06",
+        "Jul": "07",
+        "Aug": "08",
+        "Sep": "09",
+        "Oct": "10",
+        "Nov": "11",
+        "Dec": "12",
+    }
+
+    # Matches numbers formatted like 0.00 up to DECIMAL(12,2)
+    money_pattern = re.compile(r"^\d{1,3}(,\d{3})*\.\d{2}$")
+
+    pdf_file.seek(0)
+    
+    pdf_bytes = pdf_file.read()
+
+    pdf = pymupdf.open(
+        stream=pdf_bytes,
+        filetype="pdf",
+    )
+    
+    try:
+    # with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf:
+            # ----------------------------------------
+            # EXTRACT WORDS USING PYMUPDF
+            # ----------------------------------------
+            raw_words = page.get_text("words")
+
+            # PyMuPDF format:
+            # (x0, y0, x1, y1, text, block_no, line_no, word_no)
+            #
+            # Convert it to the same structure that the
+            # original pdfplumber code was using.
+            words = []
+
+            for w in raw_words:
+                x0, y0, x1, y1, text, block_no, line_no, word_no = w
+
+                words.append(
+                    {
+                        "x0": x0,
+                        "x1": x1,
+                        "top": y0,
+                        "bottom": y1,
+                        "text": text,
+                    }
+                )
+
+            # Sort in reading order
+            words.sort(
+                key=lambda w: (w["top"], w["x0"])
+            )
+
+            # ----------------------------------------
+            # FIND TRANSACTION STARTS
+            # ----------------------------------------
+            starts = []
+            for i, word in enumerate(words):
+                if (
+                    word["x0"] < 120
+                    and word["top"] > 80
+                    and re.fullmatch(r"\d{2}", word["text"])
+                ):
+                    if (
+                        i + 2 < len(words)
+                        and words[i + 1]["text"] in month_map
+                        and re.fullmatch(r"\d{4},", words[i + 2]["text"])
+                    ):
+                        starts.append(
+                            (
+                                i,
+                                word["top"],
+                                word["text"],
+                                words[i + 1]["text"],
+                                words[i + 2]["text"],
+                            )
+                        )
+
+            # ----------------------------------------
+            # PROCESS EACH TRANSACTION
+            # ----------------------------------------
+            for n, (_, top, day, month, year) in enumerate(starts):
+                if n + 1 < len(starts):
+                    end_top = starts[n + 1][1]
+                else:
+                    end_top = float("inf")
+
+                block = [
+                    w
+                    for w in words
+                    if top - 1 <= w["top"] < end_top - 1
+                ]
+
+                debet = 0.0
+                kredit = 0.0
+
+                # ----------------------------------------
+                # READ DEBIT / CREDIT (USING RIGHT-ALIGNMENT x1)
+                # ----------------------------------------
+                for w in block:
+                    text = w["text"]
+
+                    if not money_pattern.fullmatch(text):
+                        continue
+
+                    value = float(text.replace(",", ""))
+                    x1 = w["x1"]  # Using right edge for alignment check
+
+                    # Physical 1st amount column (KREDIT) has right-edge x1 < 445
+                    if x1 < 445:
+                        kredit = value
+
+                    # Physical 2nd amount column (DEBET) has right-edge 445 <= x1 < 515
+                    elif 445 <= x1 < 515:
+                        debet = value
+
+                # ----------------------------------------
+                # READ REMARK / REFERENCE
+                # ----------------------------------------
+                remark_words = []
+                for w in block:
+                    # Keep remark cutoff strictly before x=300
+                    if 115 <= w["x0"] < 300:
+                        if money_pattern.fullmatch(w["text"]):
+                            continue
+                        if w["text"] == "|":
+                            continue
+                        remark_words.append(w)
+
+                remark_words.sort(key=lambda w: (w["top"], w["x0"]))
+
+                keterangan = " ".join(w["text"] for w in remark_words)
+
+                # --- REMARK CLEANING PIPELINE ---
+                # Remove MCM Inhouse Trf / MCM InhouseTrf variants
+                keterangan = re.sub(
+                    r"\bMCM\s+Inhouse\s*Trf\b",
+                    "",
+                    keterangan,
+                    flags=re.IGNORECASE,
+                )
+
+                # Cleanup whitespace and hyphens
+                keterangan = re.sub(r"\s+", " ", keterangan).strip()
+                keterangan = re.sub(r"(^|\s)-(?=\s|$)", " ", keterangan)
+                keterangan = re.sub(r"\s+", " ", keterangan).strip()
+
+                # Truncate to maximum 100 characters
+                keterangan = keterangan[:100]
+
+                # ----------------------------------------
+                # DATE FORMAT (YYYY/MM/DD)
+                # ----------------------------------------
+                tanggal = f"{year[:4]}/{month_map[month]}/{day}"
+
+                transactions.append(
+                    {
+                        "tanggal": tanggal,
+                        "keterangan": keterangan,
+                        "debit": debet,
+                        "kredit": kredit,
+                    }
+                )
+        return transactions
+    except Exception:
+        raise
+    
+    
+def parse_uob(pdf_file):
+    transactions = []
+    
+    # Matches numbers formatted like 0, 7,531, or 32,731,880 (optional decimal support added)
+    money_pattern = re.compile(r"^\d{1,3}(,\d{3})*(\.\d{2})?$")
+
+    pdf_file.seek(0)
+        
+    pdf_bytes = pdf_file.read()
+
+    pdf = pymupdf.open(
+        stream=pdf_bytes,
+        filetype="pdf",
+    )
+    
+    try:
+    # with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf:
+            # ----------------------------------------
+            # EXTRACT WORDS USING PYMUPDF
+            # ----------------------------------------
+            raw_words = page.get_text("words")
+
+            # PyMuPDF:
+            # (x0, y0, x1, y1, text,
+            #  block_no, line_no, word_no)
+            words = []
+
+            for w in raw_words:
+                x0, y0, x1, y1, text, block_no, line_no, word_no = w
+
+                words.append(
+                    {
+                        "x0": x0,
+                        "x1": x1,
+                        "top": y0,
+                        "bottom": y1,
+                        "text": text,
+                    }
+                )
+
+            # Sort in reading order
+            words.sort(
+                key=lambda w: (w["top"], w["x0"])
+            )
+
+            # ----------------------------------------
+            # FIND TRANSACTION STARTS
+            # ----------------------------------------
+            starts = []
+            for i, word in enumerate(words):
+                # Statement Date is located on the far left column (DD/MM/YYYY)
+                if (
+                    word["x0"] < 100
+                    and word["top"] > 150
+                    and re.fullmatch(r"\d{2}/\d{2}/\d{4}", word["text"])
+                ):
+                    starts.append((i, word["top"], word["text"]))
+
+            # ----------------------------------------
+            # PROCESS EACH TRANSACTION
+            # ----------------------------------------
+            for n, (_, top, date_str) in enumerate(starts):
+                if n + 1 < len(starts):
+                    end_top = starts[n + 1][1]
+                else:
+                    end_top = float("inf")
+
+                block = [
+                    w
+                    for w in words
+                    if top - 1 <= w["top"] < end_top - 1
+                ]
+
+                debet = 0.0
+                kredit = 0.0
+
+                # ----------------------------------------
+                # READ WITHDRAWAL (DEBET) & DEPOSIT (KREDIT)
+                # ADJUSTED: Column bounds swapped to align with UOB layout
+                # ----------------------------------------
+                for w in block:
+                    text = w["text"]
+
+                    if not money_pattern.fullmatch(text):
+                        continue
+
+                    value = float(text.replace(",", ""))
+                    x0 = w["x0"]
+
+                    # Withdrawal (IDR) / Debet
+                    if 330 <= x0 < 410:
+                        debet = value
+
+                    # Deposit (IDR) / Kredit
+                    elif 410 <= x0 < 480:
+                        kredit = value
+
+                # ----------------------------------------
+                # READ REMARK / DESCRIPTION
+                # ----------------------------------------
+                remark_words = []
+                for w in block:
+                    if 180 <= w["x0"] < 330:
+                        if money_pattern.fullmatch(w["text"]):
+                            continue
+                        if w["text"] in ("|", "PM", "AM"):
+                            continue
+                        remark_words.append(w)
+
+                remark_words.sort(key=lambda w: (w["top"], w["x0"]))
+                keterangan = " ".join(w["text"] for w in remark_words)
+
+                # Skip header, balance summary, or footer blocks
+                if any(
+                    k in keterangan
+                    for k in (
+                        "Description",
+                        "Total Deposits",
+                        "Total Withdrawals",
+                        "Ending Balance",
+                        "Page",
+                    )
+                ):
+                    continue
+
+                # Clean whitespace
+                keterangan = re.sub(r"\s+", " ", keterangan).strip()
+                keterangan = re.sub(r"(^|\s)-(?=\s|$)", " ", keterangan)
+                keterangan = re.sub(r"\s+", " ", keterangan).strip()
+
+                # Truncate to maximum 100 characters
+                keterangan = keterangan[:100]
+
+                # FIX 2: Skip invalid entries where both debet and kredit are 0
+                # (Handles footer dates or non-transaction matches)
+                if debet == 0.0 and kredit == 0.0:
+                    continue
+
+                # ----------------------------------------
+                # DATE FORMAT (YYYY/MM/DD)
+                # ----------------------------------------
+                day, month, year = date_str.split("/")
+                tanggal = f"{year}/{month}/{day}"
+
+                transactions.append(
+                    {
+                        "tanggal": tanggal,
+                        "keterangan": keterangan,
+                        "debit": debet,
+                        "kredit": kredit,
+                    }
+                )
+        return transactions
+    except Exception:
+        raise

@@ -24,13 +24,12 @@ if st.button('Run'):
         
         try:
             data = processor.process(bank_origin,file_type,uploaded_file)
+            df = pd.DataFrame(data)
+            st.dataframe(df)
         except ValueError as e:
             st.error(str(e))
             status_placeholder.empty()
             st.stop()
-        
-        df = pd.DataFrame(data)
-        st.dataframe(df)
         
         excel_buffer = io.BytesIO()
         df.to_excel(excel_buffer, index=False, engine="openpyxl")
