@@ -512,7 +512,7 @@ def parse_mufg(pdf_file):
     date_pattern = re.compile(r"^(\d{2}[A-Z]{3}\d{2})")
 
     # Regex pattern to match currency numbers (e.g., 70,000,000.00 or 10,778,593.22)
-    amount_pattern = re.compile(r"\b\d{1,3}(?:,\d{3})*\.\d{2}\b")
+    amount_pattern = re.compile(r"\b\d{1,3}(?:,\d{3})*\.\s*\d{2}\b")
 
     ignore_starts = (
         "STATEMENT",
@@ -555,7 +555,7 @@ def parse_mufg(pdf_file):
     all_page_blocks = []
     
     pdf_bytes = pdf_file.read()
-    
+
     with pymupdf.open(stream=pdf_bytes) as pdf:
         for page in pdf:
             text = page.get_text("text")
@@ -607,7 +607,8 @@ def parse_mufg(pdf_file):
         # Parse amounts from block
         raw_amounts = amount_pattern.findall(full_text)
         valid_amounts = [
-            float(amt.replace(",", "")) for amt in raw_amounts
+            float(amt.replace(",", "").replace(" ", ""))
+            for amt in raw_amounts
         ]
 
         if not valid_amounts:
