@@ -554,19 +554,11 @@ def parse_mufg(pdf_file):
 
     all_page_blocks = []
     
-    pdf_file.seek(0)
-                
     pdf_bytes = pdf_file.read()
-
-    pdf = pymupdf.open(
-        stream=pdf_bytes,
-        filetype="pdf",
-    )
-
     
-    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as pdf:
+    with pymupdf.open(stream=pdf_bytes) as pdf:
         for page in pdf:
-            text = page.get_text("text", sort=True)
+            text = page.get_text("text")
             if not text:
                 continue
 
