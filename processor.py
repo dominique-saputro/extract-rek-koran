@@ -18,6 +18,14 @@ PROCESSORS = {
         # "text/csv":extract_csv.parse_mandiri,
         "application/pdf":extract_pdf.parse_mandiri,  
     },
+    "MUFG":{
+        # "text/csv":extract_csv.parse_mandiri,
+        "application/pdf":extract_pdf.parse_mufg,  
+    },
+    "OCBC - NISP":{
+        # "text/csv":extract_csv.parse_mandiri,
+        "application/pdf":extract_pdf.parse_ocbc,  
+    },
 }
 
 def process(bank_origin,file_type,file):
