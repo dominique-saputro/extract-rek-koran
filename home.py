@@ -7,7 +7,7 @@ import processor
 
 st.title('Converter Rekening Koran')
 uploaded_file = st.file_uploader('Upload rekening koran', type=['csv','pdf'])
-bank_origin = st.selectbox('Pilih Bank',("BCA","UOB","MASPION","MANDIRI"))
+bank_origin = st.selectbox('Pilih Bank',options=list(processor.PROCESSORS.keys()))
 
 
 if st.button('Run'):
